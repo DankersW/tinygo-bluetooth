@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
@@ -377,23 +378,77 @@ func (a *Adapter) Connect(address Address, params ConnectionParams) (Device, err
 // Disconnect from the BLE device. This method is non-blocking and does not
 // wait until the connection is fully gone.
 func (d Device) Disconnect() error {
-	defer d.device.Release()
-	defer d.session.Release()
-
 	d.cancel()
 
-	if err := d.session.Close(); err != nil {
-		return err
-	}
-	if err := d.device.Close(); err != nil {
-		return err
+	// HACK: Give Windows BLE stack time to settle before closing.
+	// This is a documented workaround from the Bleak Python library.
+	// https://bleak.readthedocs.io/en/latest/_modules/bleak/backends/winrt/client.html
+	// Without this delay, Close() can hang indefinitely on Windows 11.
+	time.Sleep(100 * time.Millisecond)
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer d.device.Release()
+		defer d.session.Release()
+
+		if err := d.session.Close(); err != nil {
+			errCh <- err
+			return
+		}
+		if err := d.device.Close(); err != nil {
+			errCh <- err
+			return
+		}
+
+		/*
+			// 1) Unsubscribe notifications / detach handlers (Bleak does this first).
+			// You need to adapt this to TinyGo's structures:
+			// - remove ValueChanged handlers
+			// - stop notify/indicate if you have explicit calls
+			// - clear callback maps so nothing tries to use dead objects
+			//
+			// Example pseudocode:
+			// for _, sub := range d.subscriptions {
+			//     setFirst(sub.char.RemoveValueChanged(sub.token))
+			// }
+			// d.subscriptions = nil
+			// d.notifyCallbacks = nil
+
+			// 2) Detach session closed/status-changed handler (if you registered one).
+			// Example pseudocode:
+			// if d.sessionClosedToken != 0 {
+			//     setFirst(d.session.RemoveSessionStatusChanged(d.sessionClosedToken))
+			//     d.sessionClosedToken = 0
+			// }
+
+			// 3) Bleak sleeps right before closing the hang-prone WinRT services.
+			time.Sleep(100 * time.Millisecond)
+
+			// 4) Close services FIRST (this is the big Bleak difference).
+			// If TinyGo tracks discovered services, close them here.
+			// Example pseudocode:
+			// for _, svc := range d.services {
+			//     setFirst(svc.Close())
+			//     svc.Release()
+			// }
+			// d.services = nil
+
+		*/
+
+		errCh <- nil
+	}()
+
+	var closeErr error
+	select {
+	case closeErr = <-errCh:
+	case <-time.After(2 * time.Second):
+		closeErr = fmt.Errorf("disconnect close timeout: %w", context.DeadlineExceeded)
 	}
 
 	if DefaultAdapter.connectHandler != nil {
 		DefaultAdapter.connectHandler(d, false)
 	}
-
-	return nil
+	return closeErr
 }
 
 // RequestConnectionParams requests a different connection latency and timeout
