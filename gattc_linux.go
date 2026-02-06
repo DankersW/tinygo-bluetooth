@@ -289,8 +289,12 @@ func (c *DeviceCharacteristic) EnableNotifications(callback func(buf []byte)) er
 		if stopNotifyErr == nil {
 			return removeSignalErr
 		}
-		return stopNotifyErr		
+		return stopNotifyErr
 	}
+}
+
+func (c *DeviceCharacteristic) DisableNotifications() error {
+	return c.EnableNotifications(nil)
 }
 
 // GetMTU returns the MTU for the characteristic.
