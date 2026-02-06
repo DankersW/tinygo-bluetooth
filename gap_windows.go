@@ -390,6 +390,10 @@ func (d Device) Disconnect() error {
 		defer d.session.Release()
 
 		connErr := d.session.SetMaintainConnection(false)
+		if connErr != nil {
+			fmt.Printf("ERROR - TINY GO BLE: maintain close, %s ", connErr)
+		}
+		fmt.Printf("DEBUG - TINY GO BLE: maintain stop ok")
 
 		// TODO: find a way to unscribribe from notifications like how Bleak does
 
@@ -400,7 +404,16 @@ func (d Device) Disconnect() error {
 		time.Sleep(100 * time.Millisecond)
 
 		sessionCloseErr := d.session.Close()
+		if sessionCloseErr != nil {
+			fmt.Printf("ERROR - TINY GO BLE: Session close, %s ", sessionCloseErr)
+		}
+		fmt.Printf("DEBUG - TINY GO BLE: Session close ok")
+
 		deviceCloseErr := d.device.Close()
+		if deviceCloseErr != nil {
+			fmt.Printf("ERROR - TINY GO BLE: device close, %s ", deviceCloseErr)
+		}
+		fmt.Printf("DEBUG - TINY GO BLE: device close ok")
 
 		errCh <- errors.Join(connErr, sessionCloseErr, deviceCloseErr)
 	}()
