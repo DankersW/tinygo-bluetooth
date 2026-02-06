@@ -249,6 +249,8 @@ type DeviceCharacteristic struct {
 	characteristic *genericattributeprofile.GattCharacteristic
 	properties     genericattributeprofile.GattCharacteristicProperties
 
+	valueChangedToken *foundation.EventRegistrationToken
+
 	service DeviceService
 }
 
@@ -444,10 +446,11 @@ func (c DeviceCharacteristic) EnableNotificationsWithMode(mode NotificationMode,
 
 		callback(data)
 	})
-	_, err := c.characteristic.AddValueChanged(valueChangedEventHandler)
+	token, err := c.characteristic.AddValueChanged(valueChangedEventHandler)
 	if err != nil {
 		return err
 	}
+	c.valueChangedToken = &token
 
 	writeOp, err := c.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(configValue)
 	if err != nil {
@@ -471,4 +474,21 @@ func (c DeviceCharacteristic) EnableNotificationsWithMode(mode NotificationMode,
 	}
 
 	return nil
+}
+
+func (c *DeviceCharacteristic) DisableNotifications() error {
+	if c.valueChangedToken == nil {
+		return nil
+	}
+	// Write "None" to the CCCD to tell the peripheral to stop
+	writeOp, err := c.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
+		genericattributeprofile.GattClientCharacteristicConfigurationDescriptorValueNone,
+	)
+	if err == nil {
+		_ = awaitAsyncOperation(writeOp, genericattributeprofile.SignatureGattCommunicationStatus)
+	}
+	// Remove the local event handler
+	err = c.characteristic.RemoveValueChanged(*c.valueChangedToken)
+	c.valueChangedToken = nil
+	return err
 }

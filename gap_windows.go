@@ -378,54 +378,34 @@ func (a *Adapter) Connect(address Address, params ConnectionParams) (Device, err
 // Disconnect from the BLE device. This method is non-blocking and does not
 // wait until the connection is fully gone.
 func (d Device) Disconnect() error {
+	// 1. First: unsubscribe all notification handlers (your app layer
+	//    should call DisableNotifications on each characteristic)
+
+	// 2. Close services explicitly (before cancelling context)
+	//    This means NOT relying on the ctx.Done() goroutines.
+
+	// 3. SetMaintainConnection(false)
+	d.session.SetMaintainConnection(false)
+	time.Sleep(100 * time.Millisecond)
+
+	// 4. Close session
+	d.session.Close()
+
+	// 5. Close device
+	d.device.Close()
+
+	// 6. Release COM objects
+	d.session.Release()
+	d.device.Release()
+
+	// 7. Only NOW cancel the context
 	d.cancel()
 
+	// 8. Fire disconnect handler
 	if DefaultAdapter.connectHandler != nil {
 		DefaultAdapter.connectHandler(d, false)
 	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		defer d.device.Release()
-		defer d.session.Release()
-
-		connErr := d.session.SetMaintainConnection(false)
-		if connErr != nil {
-			fmt.Printf("ERROR - TINY GO BLE: maintain close, %s ", connErr)
-		}
-		fmt.Printf("DEBUG - TINY GO BLE: maintain stop ok")
-
-		// TODO: find a way to unscribribe from notifications like how Bleak does
-
-		// HACK: Give Windows BLE stack time to settle before closing.
-		// This is a documented workaround from the Bleak Python library.
-		// https://bleak.readthedocs.io/en/latest/_modules/bleak/backends/winrt/client.html
-		// Without this delay, Close() can hang indefinitely on Windows 11.
-		time.Sleep(100 * time.Millisecond)
-
-		sessionCloseErr := d.session.Close()
-		if sessionCloseErr != nil {
-			fmt.Printf("ERROR - TINY GO BLE: Session close, %s ", sessionCloseErr)
-		}
-		fmt.Printf("DEBUG - TINY GO BLE: Session close ok")
-
-		deviceCloseErr := d.device.Close()
-		if deviceCloseErr != nil {
-			fmt.Printf("ERROR - TINY GO BLE: device close, %s ", deviceCloseErr)
-		}
-		fmt.Printf("DEBUG - TINY GO BLE: device close ok")
-
-		errCh <- errors.Join(connErr, sessionCloseErr, deviceCloseErr)
-	}()
-
-	var closeErr error
-	select {
-	case closeErr = <-errCh:
-	case <-time.After(2 * time.Second):
-		closeErr = fmt.Errorf("disconnect close timeout: %w", context.DeadlineExceeded)
-	}
-
-	return closeErr
+	return nil
 }
 
 // RequestConnectionParams requests a different connection latency and timeout
